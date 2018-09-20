@@ -17,9 +17,8 @@
 
 // have a 2x1 coarse mesh (or 2x1x1) and verify DoF indices in the hp
 // case with an FECollection that contains multiple copies of the same
-// FE_Q(2) element. in the sequential case, the hp code will unify DoF
-// indices on boundaries between locally owned subdomains, but in
-// parallel, we don't do that
+// FE_Q(2) element. the hp code will unify DoF indices on boundaries
+// between all subdomains.
 
 
 #include <deal.II/base/tensor.h>
@@ -86,6 +85,9 @@ test()
         deallog << i << ' ';
       deallog << std::endl;
     }
+  deallog << "  n_locally_owned_dofs: " << dof_handler.n_locally_owned_dofs()
+          << std::endl;
+  deallog << "  n_global_dofs: " << dof_handler.n_dofs() << std::endl;
 }
 
 

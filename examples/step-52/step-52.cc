@@ -131,7 +131,7 @@ namespace Step52
 
     DoFHandler<2> dof_handler;
 
-    ConstraintMatrix constraint_matrix;
+    AffineConstraints<double> constraint_matrix;
 
     SparsityPattern sparsity_pattern;
 
@@ -229,12 +229,13 @@ namespace Step52
             for (unsigned int j = 0; j < dofs_per_cell; ++j)
               {
                 cell_matrix(i, j) +=
-                  ((-diffusion_coefficient * fe_values.shape_grad(i, q_point) *
-                      fe_values.shape_grad(j, q_point) -
-                    absorption_cross_section *
-                      fe_values.shape_value(i, q_point) *
-                      fe_values.shape_value(j, q_point)) *
-                   fe_values.JxW(q_point));
+                  ((-diffusion_coefficient *                // (-D
+                      fe_values.shape_grad(i, q_point) *    //  * grad phi_i
+                      fe_values.shape_grad(j, q_point)      //  * grad phi_j
+                    - absorption_cross_section *            //  -Sigma
+                        fe_values.shape_value(i, q_point) * //  * phi_i
+                        fe_values.shape_value(j, q_point))  //  * phi_j)
+                   * fe_values.JxW(q_point));               // * dx
                 cell_mass_matrix(i, j) += fe_values.shape_value(i, q_point) *
                                           fe_values.shape_value(j, q_point) *
                                           fe_values.JxW(q_point);
@@ -323,8 +324,9 @@ namespace Step52
             const double source =
               get_source(time, fe_values.quadrature_point(q_point));
             for (unsigned int i = 0; i < dofs_per_cell; ++i)
-              cell_source(i) += source * fe_values.shape_value(i, q_point) *
-                                fe_values.JxW(q_point);
+              cell_source(i) += fe_values.shape_value(i, q_point) * // phi_i(x)
+                                source *                            // * S(x)
+                                fe_values.JxW(q_point);             // * dx
           }
 
         cell->get_dof_indices(local_dof_indices);
@@ -346,8 +348,8 @@ namespace Step52
   // We compute $\left(M-\tau \frac{\partial f}{\partial y}\right)^{-1} M$. This
   // is done in several steps:
   //   - compute $M-\tau \frac{\partial f}{\partial y}$
-  //   - invert the matrix to get $\left(M-\tau \frac{\partial f}{\partial
-  //   y}\right)^{-1}$
+  //   - invert the matrix to get $\left(M-\tau \frac{\partial f}
+  //                                                 {\partial y}\right)^{-1}$
   //   - compute $tmp=My$
   //   - compute $z=\left(M-\tau \frac{\partial f}{\partial y}\right)^{-1} tmp =
   //   \left(M-\tau \frac{\partial f}{\partial y}\right)^{-1} My$
@@ -466,12 +468,23 @@ namespace Step52
 
   // @sect4{<code>Diffusion::explicit_method</code>}
   //
-  // This function is the driver for all the explicit methods. It calls
-  // <code>evolve_one_time_step</code> which performs one time step.  For
-  // explicit methods, <code>evolve_one_time_step</code> needs to evaluate
-  // $M^{-1}(f(t,y))$, i.e, it needs <code>evaluate_diffusion</code>. Because
-  // <code>evaluate_diffusion</code> is a member function, it needs to be bound
-  // to <code>this</code>. Finally, the solution is output every 10 time steps.
+  // This function is the driver for all the explicit methods. At the
+  // top it initializes the time stepping and the solution (by setting
+  // it to zero and then ensuring that boundary value and hanging node
+  // constraints are respected; of course, with the mesh we use here,
+  // hanging node constraints are not in fact an issue). It then calls
+  // <code>evolve_one_time_step</code> which performs one time step.
+  //
+  // For explicit methods, <code>evolve_one_time_step</code> needs to
+  // evaluate $M^{-1}(f(t,y))$, i.e, it needs
+  // <code>evaluate_diffusion</code>. Because
+  // <code>evaluate_diffusion</code> is a member function, it needs to
+  // be bound to <code>this</code>. After each evolution step, we
+  // again apply the correct boundary values and hanging node
+  // constraints.
+  //
+  // Finally, the solution is output
+  // every 10 time steps.
   void Diffusion::explicit_method(const TimeStepping::runge_kutta_method method,
                                   const unsigned int n_time_steps,
                                   const double       initial_time,
@@ -480,7 +493,9 @@ namespace Step52
     const double time_step =
       (final_time - initial_time) / static_cast<double>(n_time_steps);
     double time = initial_time;
-    solution    = 0.;
+
+    solution = 0.;
+    constraint_matrix.distribute(solution);
 
     TimeStepping::ExplicitRungeKutta<Vector<double>> explicit_runge_kutta(
       method);
@@ -495,6 +510,8 @@ namespace Step52
           time,
           time_step,
           solution);
+
+        constraint_matrix.distribute(solution);
 
         if ((i + 1) % 10 == 0)
           output_results(i + 1, method);
@@ -517,7 +534,9 @@ namespace Step52
     const double time_step =
       (final_time - initial_time) / static_cast<double>(n_time_steps);
     double time = initial_time;
-    solution    = 0.;
+
+    solution = 0.;
+    constraint_matrix.distribute(solution);
 
     TimeStepping::ImplicitRungeKutta<Vector<double>> implicit_runge_kutta(
       method);
@@ -537,6 +556,8 @@ namespace Step52
           time,
           time_step,
           solution);
+
+        constraint_matrix.distribute(solution);
 
         if ((i + 1) % 10 == 0)
           output_results(i + 1, method);
@@ -576,7 +597,9 @@ namespace Step52
     const double max_delta     = 10 * time_step;
     const double refine_tol    = 1e-1;
     const double coarsen_tol   = 1e-5;
-    solution                   = 0.;
+
+    solution = 0.;
+    constraint_matrix.distribute(solution);
 
     TimeStepping::EmbeddedExplicitRungeKutta<Vector<double>>
       embedded_explicit_runge_kutta(method,
@@ -604,6 +627,8 @@ namespace Step52
           time,
           time_step,
           solution);
+
+        constraint_matrix.distribute(solution);
 
         if ((n_steps + 1) % 10 == 0)
           output_results(n_steps + 1, method);

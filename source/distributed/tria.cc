@@ -1547,6 +1547,8 @@ namespace parallel
                             dest_sizes_variable.end(),
                             std::vector<int>::size_type(0)));
 
+#  if DEAL_II_P4EST_VERSION_GTE(2, 0, 65, 0)
+#  else
           // ----- WORKAROUND -----
           // An assertion in p4est prevents us from sending/receiving no data
           // at all, which is mandatory if one of our processes does not own
@@ -1556,6 +1558,7 @@ namespace parallel
             src_sizes_variable.resize(1);
           if (dest_sizes_variable.size() == 0)
             dest_sizes_variable.resize(1);
+#  endif
 
           // Execute variable size transfer.
           dealii::internal::p4est::functions<dim>::transfer_custom(
@@ -4262,14 +4265,14 @@ namespace parallel
 
       // collect the neighbors
       // that are going to send stuff to us
-      const std::vector<unsigned int> senders =
-        Utilities::MPI::compute_point_to_point_communication_pattern(
+      const unsigned int n_senders =
+        Utilities::MPI::compute_n_point_to_point_communications(
           this->get_communicator(), destinations);
 
       // receive ghostcelldata
       std::vector<char>                                        receive;
       CommunicateLocallyMovedVertices::CellInfo<dim, spacedim> cellinfo;
-      for (unsigned int i = 0; i < senders.size(); ++i)
+      for (unsigned int i = 0; i < n_senders; ++i)
         {
           MPI_Status status;
           int        len;
@@ -4329,7 +4332,7 @@ namespace parallel
       // check all msgs got sent and received
       Assert(Utilities::MPI::sum(needs_to_get_cells.size(),
                                  this->get_communicator()) ==
-               Utilities::MPI::sum(senders.size(), this->get_communicator()),
+               Utilities::MPI::sum(n_senders, this->get_communicator()),
              ExcInternalError());
     }
 
