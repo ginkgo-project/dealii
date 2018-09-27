@@ -28,6 +28,8 @@
 #include <deal.II/base/template_constraints.h>
 #include <deal.II/base/utilities.h>
 
+#include <deal.II/fe/component_mask.h>
+
 #include <boost/archive/basic_archive.hpp>
 #include <boost/core/demangle.hpp>
 #include <boost/property_tree/ptree_fwd.hpp>
@@ -52,6 +54,8 @@ DEAL_II_NAMESPACE_OPEN
 // forward declarations for interfaces and friendship
 class LogStream;
 class MultipleParameterLoop;
+template <int dim>
+class FunctionParser;
 
 /**
  * Namespace for a few classes that act as patterns for the ParameterHandler
@@ -1384,7 +1388,7 @@ namespace Patterns
      * container type.
      *
      * Notice that the current content of variable @p t is ignored. Its type is
-     * used to infer how to interpret the string. If the string is succesfully
+     * used to infer how to interpret the string. If the string is successfully
      * parsed, then @p t will be set to the parsed content of @p s.
      *
      * @author Luca Heltai, 2018
@@ -1715,6 +1719,23 @@ namespace Patterns
         static constexpr int map_rank  = RankInfo<Number>::map_rank;
       };
 
+      // Rank of FunctionParser
+      template <int dim>
+      struct RankInfo<std::unique_ptr<FunctionParser<dim>>>
+      {
+        static constexpr int list_rank = 1;
+        static constexpr int map_rank  = 0;
+      };
+
+      // Rank of ComponentMask
+      template <>
+      struct RankInfo<ComponentMask>
+      {
+        static constexpr int list_rank = 1;
+        static constexpr int map_rank  = 0;
+      };
+
+      // Rank of std::pair
       template <class Key, class Value>
       struct RankInfo<std::pair<Key, Value>>
       {
@@ -1832,7 +1853,7 @@ namespace Patterns
         auto p = dynamic_cast<const Patterns::Map *>(pattern.get());
         AssertThrow(p,
                     ExcMessage("I need a Map pattern to convert a string to "
-                               "a Map compatbile type."));
+                               "a Map compatible type."));
         auto                     key_p = p->get_key_pattern().clone();
         auto                     val_p = p->get_value_pattern().clone();
         std::vector<std::string> vec(t.size());
@@ -1911,7 +1932,7 @@ namespace Patterns
         auto p = dynamic_cast<const Patterns::List *>(pattern.get());
         AssertThrow(p,
                     ExcMessage("I need a List pattern to convert a string "
-                               "to a List compatbile type."));
+                               "to a List compatible type."));
         auto                     base_p = p->get_base_pattern().clone();
         std::vector<std::string> vec(dim);
 
@@ -1938,7 +1959,7 @@ namespace Patterns
         auto p = dynamic_cast<const Patterns::List *>(pattern.get());
         AssertThrow(p,
                     ExcMessage("I need a List pattern to convert a string "
-                               "to a List compatbile type."));
+                               "to a List compatible type."));
 
         auto base_p = p->get_base_pattern().clone();
         T    t;
@@ -1982,6 +2003,106 @@ namespace Patterns
       }
     };
 
+    // Functions::FunctionParser
+    template <int dim>
+    struct Convert<std::unique_ptr<FunctionParser<dim>>>
+    {
+      using T = std::unique_ptr<FunctionParser<dim>>;
+
+      static std::unique_ptr<Patterns::PatternBase>
+      to_pattern()
+      {
+        static_assert(internal::RankInfo<T>::list_rank > 0,
+                      "Cannot use this class for non List-compatible types.");
+
+        return std_cxx14::make_unique<Patterns::List>(
+          Patterns::Anything(),
+          1,
+          Patterns::List::max_int_value,
+          internal::default_list_separator[internal::RankInfo<T>::list_rank -
+                                           1]);
+      }
+
+      static std::string
+      to_string(const T &                                     t,
+                const std::unique_ptr<Patterns::PatternBase> &pattern =
+                  Convert<T>::to_pattern())
+      {
+        auto p = dynamic_cast<const Patterns::List *>(pattern.get());
+        AssertThrow(p,
+                    ExcMessage("I need a List pattern to convert a string "
+                               "to a List compatible type."));
+
+        const auto &expressions = t->get_expressions();
+        if (expressions.size() == 0)
+          return std::string();
+
+        std::string s = expressions[0];
+        for (unsigned int i = 1; i < expressions.size(); ++i)
+          s = s + p->get_separator() + expressions[i];
+
+        AssertThrow(pattern->match(s), ExcNoMatch(s, p));
+        return s;
+      }
+
+      static T
+      to_value(const std::string &                           s,
+               const std::unique_ptr<Patterns::PatternBase> &pattern =
+                 Convert<T>::to_pattern())
+      {
+        AssertThrow(pattern->match(s), ExcNoMatch(s, pattern.get()));
+
+        auto p = dynamic_cast<const Patterns::List *>(pattern.get());
+        AssertThrow(p,
+                    ExcMessage("I need a List pattern to convert a string "
+                               "to a List compatible type."));
+
+        const auto expressions =
+          Utilities::split_string_list(s, p->get_separator());
+
+        T t = std_cxx14::make_unique<FunctionParser<dim>>(expressions.size());
+        const std::string var =
+          FunctionParser<dim>::default_variable_names() + ",t";
+        const typename FunctionParser<dim>::ConstMap constants;
+        t->initialize(var, expressions, constants, true);
+        return t;
+      }
+    };
+
+    // ComponentMask
+    template <>
+    struct Convert<ComponentMask>
+    {
+      using T = ComponentMask;
+
+      static std::unique_ptr<Patterns::PatternBase>
+      to_pattern()
+      {
+        return Convert<std::vector<bool>>::to_pattern();
+      }
+
+      static std::string
+      to_string(const T &                                     t,
+                const std::unique_ptr<Patterns::PatternBase> &pattern =
+                  Convert<T>::to_pattern())
+      {
+        std::vector<bool> mask(t.size());
+        for (unsigned int i = 0; i < t.size(); ++i)
+          mask[i] = t[i];
+
+        return Convert<std::vector<bool>>::to_string(mask, pattern);
+      }
+
+      static T
+      to_value(const std::string &                           s,
+               const std::unique_ptr<Patterns::PatternBase> &pattern =
+                 Convert<T>::to_pattern())
+      {
+        const auto mask = Convert<std::vector<bool>>::to_value(s, pattern);
+        return ComponentMask(mask);
+      }
+    };
+
     // Complex numbers
     template <class Number>
     struct Convert<std::complex<Number>>
@@ -2009,7 +2130,7 @@ namespace Patterns
         auto p = dynamic_cast<const Patterns::List *>(pattern.get());
         AssertThrow(p,
                     ExcMessage("I need a List pattern to convert a string "
-                               "to a List compatbile type."));
+                               "to a List compatible type."));
 
         auto        base_p = p->get_base_pattern().clone();
         std::string s =
@@ -2034,7 +2155,7 @@ namespace Patterns
         auto p = dynamic_cast<const Patterns::List *>(pattern.get());
         AssertThrow(p,
                     ExcMessage("I need a List pattern to convert a string "
-                               "to a List compatbile type."));
+                               "to a List compatible type."));
 
         auto base_p = p->get_base_pattern().clone();
 
